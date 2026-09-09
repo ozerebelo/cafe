@@ -153,6 +153,8 @@ h2{font-size:1.12rem;font-weight:700}
 .chip.suggested{border-color:var(--cobalt);box-shadow:inset 0 0 0 1px var(--cobalt)}
 .chip.mine{background:var(--cobalt);border-color:var(--cobalt);color:#fff;padding-left:13px}
 .chip.mine .dot{display:none}
+.chip.other{border-style:dashed;color:var(--ink-2)}
+.chip.other .dot{border-radius:50%}
 
 .row-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
 .btn{
@@ -251,6 +253,7 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
 .bar-fill{position:absolute;inset:0 auto 0 0;border-radius:99px;background:var(--tile,var(--cobalt))}
 .bar-tick{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink-2);opacity:.75}
 .tab-meta{font-family:var(--font-mono);font-size:.7rem;color:var(--ink-3)}
+.guests{margin:16px 0 0;padding-top:13px;border-top:1px solid var(--line);font-size:.8rem;color:var(--ink-2)}
 .tab-saldo{
   font-family:var(--font-mono);font-weight:700;font-size:1.05rem;
   font-variant-numeric:tabular-nums;text-align:right;min-width:62px;
@@ -345,17 +348,19 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
       </div>
       <p class="callout" id="tabHeadline" hidden></p>
       <ol class="tab-list" id="tabList"></ol>
-      <p class="foot">A quota justa reparte cada dia registado pelas pessoas que já estavam na equipa nesse dia. Saldo negativo é quem ficou a dever cafés.</p>
+      <p class="guests" id="guestLine" hidden></p>
+      <p class="foot">A quota justa reparte cada dia registado pelas pessoas que já estavam na escala nesse dia. Saldo negativo é quem ficou a dever cafés.</p>
     </section>
   </div>
 
   <section class="panel">
-    <div class="sec-head"><h2>Equipa</h2><button class="btn ghost" data-act="wipe">Apagar tudo</button></div>
+    <div class="sec-head"><h2>A escala</h2><button class="btn ghost" data-act="clearruns">Apagar registos</button></div>
     <ul class="team-list" id="teamList"></ul>
     <div class="add-row">
       <input type="text" id="addName" placeholder="Nome de quem entra na escala" autocomplete="off">
       <button class="btn primary" data-act="addperson">Adicionar</button>
     </div>
+    <p class="foot">São estes os nomes que aparecem no registo diário. Quem não estiver aqui entra pela opção «Outro», sem contar para o saldo.</p>
   </section>
 </main>
 
@@ -372,7 +377,10 @@ document.documentElement.lang = 'pt-PT';
 
 /* ============ constantes ============ */
 var PALETTE = ['#2451B2','#1C7A6E','#9C4A2E','#6B4C9A','#B0862B','#3D7A31','#A83B62','#2E6E9E','#8A5A2B','#4A5568'];
-var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me'};
+var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me', seeded:'escala-cafe.seeded'};
+var ROSTER = ['André','Carol','Duarte','Maria','Paulinho','Zé'];
+var GUEST_COLOR = '#4A5568';
+var CLIENT = 'c'+Math.random().toString(36).slice(2,10);
 
 /* ============ datas ============ */
 function pad(n){return String(n).padStart(2,'0');}
@@ -395,6 +403,7 @@ function ago(iso){
   if(n<0) return 'daqui a '+(-n)+' dias';
   return 'há '+n+' dias';
 }
+function idas(n){ return n+(n===1?' ida':' idas'); }
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function initials(name){
@@ -408,7 +417,7 @@ function initials(name){
 var people=[], runs=new Map(), store=null, ready=false;
 var me=null, editingId=null, sheet=null;
 var view=(function(){var d=new Date();return {y:d.getFullYear(), m:d.getMonth()};})();
-var period='all', busy=false;
+var period='all';
 try{ me=localStorage.getItem(LS.me)||null; }catch(e){}
 
 /* ============ armazenamento local ============ */
@@ -433,7 +442,19 @@ function localStore(){
       l.push(Object.assign({date:date},r));write(LS.runs,l);emit();return Promise.resolve();},
     clearRun:function(date){write(LS.runs,read(LS.runs,[]).filter(function(x){return x.date!==date;}));
       emit();return Promise.resolve();},
-    wipe:function(){write(LS.people,[]);write(LS.runs,[]);emit();return Promise.resolve();}
+    clearRuns:function(){write(LS.runs,[]);emit();return Promise.resolve();},
+    seedRoster:function(names){
+      var done=false; try{done=localStorage.getItem(LS.seeded)==='1';}catch(e){}
+      if(done) return Promise.resolve();
+      try{localStorage.setItem(LS.seeded,'1');}catch(e){}
+      var l=read(LS.people,[]);
+      if(l.length) return Promise.resolve();
+      var today=toISO(new Date());
+      names.forEach(function(nm,i){
+        l.push({id:'p'+i+Math.random().toString(36).slice(2,6),name:nm,
+                color:PALETTE[i%PALETTE.length],createdAt:today});
+      });
+      write(LS.people,l);emit();return Promise.resolve();}
   };
 }
 
@@ -455,10 +476,30 @@ function cloudStore(db){
     removePerson:function(id){return db.doc('people/'+id).delete();},
     setRun:function(date,r){return db.doc('runs/'+date).set(Object.assign({date:date},r));},
     clearRun:function(date){return db.doc('runs/'+date).delete();},
-    wipe:function(){
-      var jobs=people.map(function(p){return db.doc('people/'+p.id).delete();});
+    clearRuns:function(){
+      var jobs=[];
       runs.forEach(function(r){jobs.push(db.doc('runs/'+r.date).delete());});
-      return Promise.all(jobs);}
+      return Promise.all(jobs);},
+    seedRoster:function(names){
+      var ref=db.doc('config/roster');
+      return ref.acquire({holder:CLIENT,ttlMs:15000}).then(function(res){
+        if(!res.acquired) return null;
+        return ref.get().then(function(snap){
+          var body=snap.exists?snap.data():null;
+          if(body&&body.seeded) return null;
+          return db.collection('people').limit(5).get().then(function(q){
+            var stamp={seeded:true,at:new Date().toISOString()};
+            if(!q.empty) return ref.set(stamp);
+            var chain=Promise.resolve(), today=toISO(new Date());
+            names.forEach(function(nm,i){
+              chain=chain.then(function(){
+                return db.collection('people').add({name:nm,color:PALETTE[i%PALETTE.length],createdAt:today});
+              });
+            });
+            return chain.then(function(){ return ref.set(stamp); });
+          });
+        });
+      });}
   };
 }
 
@@ -480,19 +521,38 @@ function computeStats(){
   var start=periodStart(), today=todayISO();
   var byId={}; people.forEach(function(p){byId[p.id]=p;});
 
-  /* data de entrada: a mais antiga entre o registo e a primeira ida */
-  var entry={};
-  people.forEach(function(p){entry[p.id]=p.createdAt||'0000-01-01';});
-  runs.forEach(function(r){
-    if(byId[r.personId] && r.date<entry[r.personId]) entry[r.personId]=r.date;
+  /* Data de entrada. Quem foi adicionado no mesmo dia conta como uma
+     leva: se um dia anterior for preenchido à posteriori, recua a leva
+     inteira, para que esse café não caia todo em cima de uma pessoa. */
+  var cohort={};
+  people.forEach(function(p){
+    var c=p.createdAt||'0000-01-01';
+    if(cohort[c]===undefined) cohort[c]=c;
   });
+  runs.forEach(function(r){
+    var p=byId[r.personId];
+    if(!p) return;
+    var c=p.createdAt||'0000-01-01';
+    if(r.date<cohort[c]) cohort[c]=r.date;
+  });
+  var entry={};
+  people.forEach(function(p){ entry[p.id]=cohort[p.createdAt||'0000-01-01']; });
 
   var stats={};
   people.forEach(function(p){stats[p.id]={p:p,count:0,quota:0,last:null,total:0};});
   runs.forEach(function(r){ if(byId[r.personId]) stats[r.personId].total++; });
 
-  var list=[];
-  runs.forEach(function(r){ if(r.date>=start && r.date<=today && byId[r.personId]) list.push(r); });
+  var list=[], guests={}, guestTotal=0, anyGuest=false;
+  runs.forEach(function(r){
+    if(byId[r.personId]){
+      if(r.date>=start && r.date<=today) list.push(r);
+      return;
+    }
+    anyGuest=true;
+    if(r.date<start||r.date>today) return;
+    var nm=r.personName||'sem nome';
+    guests[nm]=(guests[nm]||0)+1; guestTotal++;
+  });
   list.sort(function(a,b){return a.date<b.date?-1:1;});
 
   list.forEach(function(r){
@@ -509,7 +569,7 @@ function computeStats(){
   return {rows:people.map(function(p){
     var s=stats[p.id];
     return {p:p,count:s.count,quota:s.quota,saldo:s.count-s.quota,last:s.last,total:s.total};
-  }), runsInPeriod:list.length};
+  }), runsInPeriod:list.length, guests:guests, guestTotal:guestTotal, anyGuest:anyGuest};
 }
 
 /* ============ render ============ */
@@ -556,7 +616,9 @@ function personChips(date,selectedId){
     return '<button class="chip'+(p.id===selectedId?' suggested':'')+'" style="--tile:'+esc(p.color)+'" '+
       'data-act="pick" data-id="'+esc(p.id)+'" data-date="'+esc(date)+'">'+
       '<span class="dot"></span>'+esc(p.name)+'</button>';
-  }).join('');
+  }).join('')+
+  '<button class="chip other" style="--tile:'+GUEST_COLOR+'" data-act="other" data-date="'+esc(date)+'">'+
+  '<span class="dot"></span>Outro…</button>';
 }
 
 function renderToday(){
@@ -568,13 +630,9 @@ function renderToday(){
 
   if(!people.length){
     body.innerHTML=
-      '<h1 class="display">Ainda não há ninguém na escala.</h1>'+
-      '<p class="hint">Escreve os nomes da equipa, um por linha. A partir daí é um toque por dia para registar quem foi buscar o café.</p>'+
-      '<textarea id="bulk" rows="4" placeholder="Ana Silva&#10;Bruno Costa&#10;Carla Nunes"></textarea>'+
-      '<div class="row-actions">'+
-        '<button class="btn primary" data-act="bulkadd">Criar equipa</button>'+
-        '<button class="btn ghost" data-act="demo">Ver com dados de exemplo</button>'+
-      '</div>';
+      '<h1 class="display">A preparar a escala…</h1>'+
+      '<p class="hint">Se ficar assim, cria a lista de raiz.</p>'+
+      '<div class="row-actions"><button class="btn primary" data-act="seed">Criar a escala</button></div>';
     return;
   }
 
@@ -584,10 +642,12 @@ function renderToday(){
     var stat=computeStats().rows.filter(function(r){return r.p.id===run.personId;})[0];
     body.innerHTML=
       '<div class="today-head">'+
-        '<span class="avatar" style="--tile:'+esc(p?p.color:'#4A5568')+'">'+esc(initials(run.personName))+'</span>'+
+        '<span class="avatar" style="--tile:'+esc(p?p.color:GUEST_COLOR)+'">'+esc(initials(run.personName))+'</span>'+
         '<div style="flex:1;min-width:220px">'+
-          '<h1 class="display">'+esc(run.personName)+' foi buscar o café.</h1>'+
-          '<p class="hint">'+(stat?('É a '+stat.total+'.ª ida desde que a escala existe.'):'Registado hoje.')+'</p>'+
+          '<h1 class="display">'+esc(run.personName)+' foi buscar o café.'+
+            (p?'':' <span class="badge">fora da escala</span>')+'</h1>'+
+          '<p class="hint">'+(stat?('É a '+stat.total+'.ª ida desde que a escala existe.')
+            :'Não está na escala, por isso este dia não mexe no saldo de ninguém.')+'</p>'+
         '</div>'+
       '</div>'+
       '<div class="row-actions">'+
@@ -628,15 +688,18 @@ function renderCalendar(){
     if(iso===t) cls+=' today';
     if(run) cls+=' filled';
     html+='<button class="'+cls+'" data-act="day" data-date="'+iso+'"'+
-      (run?(' style="--tile:'+esc(p?p.color:'#4A5568')+'"'):'')+
+      (run?(' style="--tile:'+esc(p?p.color:GUEST_COLOR)+'"'):'')+
       ' aria-label="'+d+' — '+(run?esc(run.personName):'sem registo')+'">'+
       '<span class="cell-num">'+d+'</span>'+
       (run?'<span class="cell-ini">'+esc(initials(run.personName))+'</span>':'')+
       '</button>';
   }
   document.getElementById('calGrid').innerHTML=html;
+  var anyGuest=false;
+  runs.forEach(function(r){ if(!people.some(function(x){return x.id===r.personId;})) anyGuest=true; });
   document.getElementById('calLegend').innerHTML=people.map(function(p){
-    return '<span style="--tile:'+esc(p.color)+'"><i></i>'+esc(p.name)+'</span>';}).join('');
+    return '<span style="--tile:'+esc(p.color)+'"><i></i>'+esc(p.name)+'</span>';}).join('')+
+    (anyGuest?'<span style="--tile:'+GUEST_COLOR+'"><i></i>fora da escala</span>':'');
 }
 
 function renderTab(){
@@ -644,7 +707,10 @@ function renderTab(){
     b.setAttribute('aria-pressed', b.dataset.period===period?'true':'false');});
   var list=document.getElementById('tabList'), head=document.getElementById('tabHeadline');
 
-  if(!people.length){ list.innerHTML='<p class="empty">A conta abre assim que a equipa existir.</p>'; head.hidden=true; return; }
+  if(!people.length){
+    list.innerHTML='<p class="empty">A conta abre assim que a escala existir.</p>';
+    head.hidden=true; document.getElementById('guestLine').hidden=true; return;
+  }
 
   var res=computeStats(), rows=res.rows.slice();
   rows.sort(function(a,b){
@@ -654,7 +720,9 @@ function renderTab(){
 
   if(!res.runsInPeriod){
     head.hidden=false; head.className='callout calm';
-    head.textContent='Ainda não há idas registadas neste período.';
+    head.textContent=res.guestTotal
+      ? 'Neste período só há idas de gente de fora da escala.'
+      : 'Ainda não há idas registadas neste período.';
   } else {
     var worst=rows[0];
     if(worst.saldo<=-1){
@@ -682,12 +750,20 @@ function renderTab(){
           '<span class="bar-fill" style="width:'+(100*r.count/scale).toFixed(1)+'%"></span>'+
           '<span class="bar-tick" style="left:'+(100*r.quota/scale).toFixed(1)+'%" title="quota justa"></span>'+
         '</div>'+
-        '<div class="tab-meta">'+r.count+' idas · quota '+fPlain.format(r.quota)+' · '+
+        '<div class="tab-meta">'+idas(r.count)+' · quota '+fPlain.format(r.quota)+' · '+
           (r.last?('última '+ago(r.last)):'nunca foi')+'</div>'+
       '</div>'+
       '<div class="tab-saldo '+cls+'">'+fSaldo.format(r.saldo)+'</div>'+
     '</li>';
   }).join('');
+
+  var g=document.getElementById('guestLine');
+  var names=Object.keys(res.guests).sort(function(a,b){return res.guests[b]-res.guests[a];});
+  if(!names.length){ g.hidden=true; g.textContent=''; return; }
+  g.hidden=false;
+  g.innerHTML='Fora da escala: <strong>'+idas(res.guestTotal)+'</strong> · '+
+    names.map(function(nm){return esc(nm)+' '+res.guests[nm];}).join(' · ')+
+    '. Estes dias não contam para o saldo de ninguém.';
 }
 
 function renderTeam(){
@@ -707,7 +783,7 @@ function renderTeam(){
     return '<li class="team-row">'+
       '<span class="avatar sm" style="--tile:'+esc(p.color)+'">'+esc(initials(p.name))+'</span>'+
       '<span class="team-name">'+esc(p.name)+'</span>'+
-      '<span class="team-meta">'+counts[p.id]+' idas · desde '+
+      '<span class="team-meta">'+idas(counts[p.id])+' · desde '+
         (p.createdAt?esc(fShort.format(fromISO(p.createdAt))):'—')+'</span>'+
       '<button class="icon" data-act="recolor" data-id="'+esc(p.id)+'">cor</button>'+
       '<button class="icon" data-act="rename" data-id="'+esc(p.id)+'">nome</button>'+
@@ -732,6 +808,20 @@ function renderSheet(){
         (run?'<button class="btn danger" data-act="clear" data-date="'+esc(d)+'">Apagar registo</button>':'')+
         '<button class="btn ghost" data-act="closesheet">Fechar</button>'+
       '</div>';
+  } else if(sheet.type==='guest'){
+    var gd=sheet.date, gr=runs.get(gd);
+    var pre=(gr&&!people.some(function(x){return x.id===gr.personId;}))?gr.personName:'';
+    box.innerHTML=
+      '<p class="eyebrow">fora da escala · '+esc(fDayMonth.format(fromISO(gd)))+'</p>'+
+      '<h3 id="sheetTitle">Quem foi buscar o café?</h3>'+
+      '<p class="hint">Para quem não faz parte da escala. O dia fica registado no calendário, mas não mexe no saldo de ninguém.</p>'+
+      '<input type="text" id="guestName" placeholder="Nome" autocomplete="off" style="margin-top:14px" value="'+esc(pre)+'">'+
+      '<div class="row-actions">'+
+        '<button class="btn primary" data-act="saveguest" data-date="'+esc(gd)+'">Registar</button>'+
+        '<button class="btn ghost" data-act="closesheet">Cancelar</button>'+
+      '</div>';
+    var gi=document.getElementById('guestName');
+    if(gi){ gi.focus(); gi.select(); }
   } else {
     box.innerHTML=
       '<h3 id="sheetTitle">'+esc(sheet.title)+'</h3>'+
@@ -767,53 +857,12 @@ function setRun(date,id){
     .catch(function(){ note('não foi possível guardar'); });
 }
 
-function loadDemo(){
-  if(!store||busy) return;
-  busy=true;
-  var names=['Ana Silva','Bruno Costa','Carla Nunes','Diogo Reis','Inês Pires'];
-  var start=shiftISO(todayISO(),-70);
-  var chain=Promise.resolve();
-  names.forEach(function(n,i){
-    chain=chain.then(function(){
-      return store.addPerson({name:n,color:PALETTE[i%PALETTE.length],createdAt:start});
-    });
-  });
-  chain.then(function(){
-    /* rotação com um "escapista" claro (Diogo) */
-    var weights=[1,1,1,0.3,0.9], seed=7;
-    function rnd(){ seed=(seed*1103515245+12345)%2147483648; return seed/2147483648; }
-    var picks=[];
-    for(var back=0; back<48 && picks.length<32; back++){
-      var day=shiftISO(todayISO(),-1-back), dow=fromISO(day).getDay();
-      if(dow===0||dow===6) continue;
-      var total=weights.reduce(function(a,b){return a+b;},0), r=rnd()*total, acc=0, idx=0;
-      for(var k=0;k<weights.length;k++){ acc+=weights[k]; if(r<=acc){ idx=k; break; } }
-      picks.push({date:day, idx:idx});
-    }
-    return picks;
-  }).then(function(picks){
-    /* people já chegou via snapshot? se não, resolve pelos nomes quando chegar */
-    var wait=new Promise(function(res){
-      var tries=0;
-      (function poll(){
-        if(people.length>=5||tries>40) return res();
-        tries++; setTimeout(poll,120);
-      })();
-    });
-    return wait.then(function(){
-      var byName={}; people.forEach(function(p){byName[p.name]=p;});
-      var chain2=Promise.resolve();
-      picks.forEach(function(pk){
-        var p=byName[names[pk.idx]];
-        if(!p) return;
-        chain2=chain2.then(function(){
-          return store.setRun(pk.date,{personId:p.id,personName:p.name,updatedAt:new Date().toISOString()});
-        });
-      });
-      return chain2;
-    });
-  }).then(function(){ busy=false; note('exemplo carregado'); })
-    .catch(function(){ busy=false; note('não foi possível carregar o exemplo'); });
+function setGuestRun(date,name){
+  if(!store) return;
+  var nm=String(name||'').trim().slice(0,40);
+  if(!nm) return;
+  store.setRun(date,{personId:'',personName:nm,guest:true,updatedAt:new Date().toISOString()})
+    .catch(function(){ note('não foi possível guardar'); });
 }
 
 /* ============ eventos ============ */
@@ -829,12 +878,13 @@ document.addEventListener('click', function(e){
     if(a==='clear'){ if(store) store.clearRun(date).catch(function(){note('não foi possível apagar');}); closeSheet(); return; }
     if(a==='closesheet'){ closeSheet(); return; }
     if(a==='confirmyes'){ var fn=sheet&&sheet.fn; closeSheet(); if(fn) fn(); return; }
-    if(a==='bulkadd'){
-      var ta=document.getElementById('bulk');
-      if(ta) addPeople(ta.value.split('\n'));
+    if(a==='seed'){ if(store) store.seedRoster(ROSTER).catch(function(){note('não foi possível criar a escala');}); return; }
+    if(a==='other'){ sheet={type:'guest',date:date}; renderSheet(); return; }
+    if(a==='saveguest'){
+      var gi=document.getElementById('guestName');
+      if(gi&&gi.value.trim()){ setGuestRun(date,gi.value); closeSheet(); }
       return;
     }
-    if(a==='demo'){ loadDemo(); return; }
     if(a==='addperson'){
       var inp=document.getElementById('addName');
       if(inp&&inp.value.trim()){ addPeople([inp.value]); inp.value=''; }
@@ -868,10 +918,10 @@ document.addEventListener('click', function(e){
         'Remover', function(){ if(store) store.removePerson(id).catch(function(){note('não foi possível remover');}); });
       return;
     }
-    if(a==='wipe'){
-      askConfirm('Apagar toda a escala?',
-        'Apaga a equipa e todos os dias registados, para toda a gente. Não há como voltar atrás.',
-        'Apagar tudo', function(){ if(store) store.wipe().catch(function(){note('não foi possível apagar');}); });
+    if(a==='clearruns'){
+      askConfirm('Apagar todos os registos?',
+        'Apaga todos os dias já registados, para toda a gente. Os nomes da escala ficam. Não há como voltar atrás.',
+        'Apagar registos', function(){ if(store) store.clearRuns().catch(function(){note('não foi possível apagar');}); });
       return;
     }
   }
@@ -885,6 +935,10 @@ document.addEventListener('keydown', function(e){
     if(e.target.id==='editName'){
       var btn=document.querySelector('[data-act="saverename"]');
       if(btn) btn.click();
+    }
+    if(e.target.id==='guestName'){
+      var gb=document.querySelector('[data-act="saveguest"]');
+      if(gb) gb.click();
     }
   }
 });
@@ -908,8 +962,13 @@ function sortPeople(list){
   });
 }
 
+var seedTried=false;
 function connect(){
-  store.onPeople(function(list){ people=sortPeople(list); ready=true; render(); });
+  store.onPeople(function(list){
+    people=sortPeople(list); ready=true;
+    if(!seedTried){ seedTried=true; store.seedRoster(ROSTER).catch(function(){}); }
+    render();
+  });
   store.onRuns(function(list){
     runs=new Map(); list.forEach(function(r){ runs.set(r.date,r); });
     ready=true; render();
