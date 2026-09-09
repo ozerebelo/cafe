@@ -267,6 +267,7 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
 .team-row:first-child{border-top:0}
 .team-name{font-weight:600;font-size:.92rem;margin-right:auto}
 .team-meta{font-family:var(--font-mono);font-size:.68rem;color:var(--ink-3)}
+.team-acts{display:flex;gap:6px;flex-wrap:wrap}
 .icon{
   padding:4px 9px;border-radius:6px;cursor:pointer;
   background:transparent;border:1px solid var(--line);
@@ -291,6 +292,29 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
 }
 .sheet h3{font-size:1.15rem;margin-bottom:4px}
 .sheet .eyebrow{margin-bottom:6px}
+
+/* ---------- telemóvel ---------- */
+@media (max-width:560px){
+  /* o nome da app fica com a primeira linha só para ele, e o seletor de
+     pessoa e o estado da ligação partilham a segunda */
+  .topbar{gap:10px 12px}
+  .brand{flex:1 0 100%;margin-right:0}
+  .me{margin-right:auto;flex:1;min-width:0}
+  select{flex:1;max-width:none;padding:8px}
+
+  /* alvos que se acertam com o dedo */
+  .seg button{padding:9px 13px}
+  .nav button{width:38px;height:38px}
+  .icon{padding:9px 11px}
+  .btn{padding:10px 15px}
+  .chip{padding:10px 15px 10px 11px;font-size:.92rem}
+
+  /* o que já está dito noutro sítio sai da frente */
+  .team-meta{display:none}
+  .tab-quota{display:none}
+  .tab-row{gap:11px}
+  .tab-saldo{font-size:1rem;min-width:52px}
+}
 </style>
 <!-- ARTIFACT:SPLIT -->
 </head>
@@ -824,7 +848,8 @@ function renderTab(){
           '<span class="bar-fill" style="width:'+(100*r.count/scale).toFixed(1)+'%"></span>'+
           '<span class="bar-tick" style="left:'+(100*r.quota/scale).toFixed(1)+'%" title="quota justa"></span>'+
         '</div>'+
-        '<div class="tab-meta">'+idas(r.count)+' · quota '+fPlain.format(r.quota)+' · '+
+        '<div class="tab-meta">'+idas(r.count)+
+          '<span class="tab-quota"> · quota '+fPlain.format(r.quota)+'</span> · '+
           (r.last?('última '+ago(r.last)):'nunca foi')+'</div>'+
       '</div>'+
       '<div class="tab-saldo '+cls+'">'+fSaldo.format(r.saldo)+'</div>'+
@@ -859,9 +884,11 @@ function renderTeam(){
       '<span class="team-name">'+esc(p.name)+'</span>'+
       '<span class="team-meta">'+idas(counts[p.id])+' · desde '+
         (p.createdAt?esc(fShort.format(fromISO(p.createdAt))):'—')+'</span>'+
-      '<button class="icon" data-act="recolor" data-id="'+esc(p.id)+'">cor</button>'+
-      '<button class="icon" data-act="rename" data-id="'+esc(p.id)+'">nome</button>'+
-      '<button class="icon danger" data-act="removeperson" data-id="'+esc(p.id)+'">remover</button>'+
+      '<span class="team-acts">'+
+        '<button class="icon" data-act="recolor" data-id="'+esc(p.id)+'">cor</button>'+
+        '<button class="icon" data-act="rename" data-id="'+esc(p.id)+'">nome</button>'+
+        '<button class="icon danger" data-act="removeperson" data-id="'+esc(p.id)+'">remover</button>'+
+      '</span>'+
     '</li>';
   }).join('');
 }
