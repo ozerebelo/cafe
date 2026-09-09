@@ -79,6 +79,24 @@ vontade. Define-a se quiseres a regra da secção seguinte.
 O `schema.sql` traz as mesmas tabelas, para quem preferir prepará-las no editor
 SQL da Neon.
 
+## Segredos
+
+Não há nada sensível no repositório. As três variáveis vivem só nas definições do
+projeto na Vercel, e qualquer uma se troca sem tocar no código.
+
+**Palavra-passe da base de dados.** No painel da Neon, repõe a palavra-passe do
+papel `neondb_owner`, copia a *connection string* nova, atualiza `DATABASE_URL`
+na Vercel e manda redeploy. A antiga deixa de servir no instante em que a repões,
+por isso convém fazer as duas coisas seguidas.
+
+**`APP_PASSWORD` e `ADMIN_PASSWORD`.** Muda o valor na Vercel e manda redeploy.
+Os dispositivos guardam a palavra-passe antiga no browser e a API passa a
+recusá-la, mas a página percebe e volta a pedi-la sozinha. Ninguém tem de limpar
+nada à mão.
+
+Uma variável alterada só conta depois de um redeploy. Mudá-la sem redeploy deixa
+o que está em produção a correr com o valor antigo.
+
 ## Quem pode fazer o quê
 
 A ideia é que ninguém consiga fazer desaparecer uma ida sua sem passar por quem
