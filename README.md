@@ -17,11 +17,12 @@ toque para registar, e uma conta que mostra quem se anda a escapar à tarefa.
 
 O registo diário só oferece os nomes da escala, mais a opção **Outro**, que abre
 um campo de texto livre. A escala arranca com André, Carol, Duarte, Maria,
-Paulinho e Zé, criados automaticamente na primeira abertura.
+Paulinho e Zé, criados sozinhos na primeira utilização.
 
 Um dia registado por **Outro** aparece no calendário a cinzento e é somado à
 linha «fora da escala», mas não entra no cálculo da quota nem no saldo de
-ninguém.
+ninguém. O mesmo acontece aos dias de quem for removido da escala mais tarde:
+ficam no calendário com o nome de então, sem mexer nas contas de quem lá está.
 
 ### Como é calculada a quota justa
 
@@ -35,44 +36,93 @@ reparta por toda a gente em vez de cair em cima de quem o registou.
 
 ## Onde correm os dados
 
-O ficheiro `index.html` é a aplicação inteira, sem dependências. A camada de
-armazenamento escolhe-se sozinha ao arrancar:
+O `index.html` é a aplicação inteira, sem dependências no browser. A camada de
+armazenamento escolhe-se sozinha ao arrancar, e o canto superior direito diz
+sempre qual saiu.
 
 | Contexto | Armazenamento | Partilha |
 | --- | --- | --- |
-| Publicado como Artifact do Claude | capacidade `db` do Artifact | partilhado e em tempo real entre dispositivos |
-| Servido como página estática (ex.: GitHub Pages) | `localStorage` do browser | só naquele dispositivo |
+| Publicado na Vercel | Postgres na Neon, através de `api/` | partilhado com quem tiver o endereço |
+| Publicado como Artifact do Claude | capacidade `db` do Artifact | partilhado dentro da organização |
+| Ficheiro aberto à mão, sem servidor | `localStorage` do browser | só naquele dispositivo |
 
-O estado da ligação aparece sempre no canto superior direito: *partilhado* ou
-*só neste dispositivo*.
+A Neon não empurra alterações, por isso o que os outros dispositivos registam
+chega ao voltar a pedir o estado: de seis em seis segundos com o separador à
+vista, e logo que ele volte a estar.
 
-## Publicar
+## Publicar na Vercel com uma base de dados Neon
 
-**Como Artifact (partilhado).** Gera a versão sem `<head>`/`<body>` — o
-publicador acrescenta esse envelope — e publica-a com a capacidade `db`:
+1. **Base de dados.** Em [neon.com](https://neon.com), cria um projeto e copia a
+   *connection string* com pooling, a que tem `-pooler` no anfitrião.
+2. **Projeto.** Em [vercel.com/new](https://vercel.com/new), importa este
+   repositório. Não há framework a escolher: as funções em `api/` e o
+   `index.html` na raiz bastam.
+3. **Variáveis de ambiente**, em Settings → Environment Variables:
+
+   | Nome | Obrigatória | Para que serve |
+   | --- | --- | --- |
+   | `DATABASE_URL` | sim | a *connection string* da Neon |
+   | `APP_PASSWORD` | não | palavra-passe única para abrir a app |
+
+4. **Deploy.** As tabelas e a escala inicial criam-se no primeiro pedido. Não é
+   preciso correr nada à mão.
+
+Sem `APP_PASSWORD` a app fica aberta a quem tiver o endereço. Com ela, a página
+pede a palavra-passe uma vez por dispositivo e guarda-a no browser; a API recusa
+tudo o resto.
+
+O `schema.sql` traz as mesmas tabelas, para quem preferir prepará-las no editor
+SQL da Neon.
+
+## Correr localmente
 
 ```bash
-./scripts/build-artifact.sh          # escreve dist/artifact.html
+npm install
+export DATABASE_URL="postgres://…"   # a da Neon, ou um Postgres local
+export PG_DRIVER=pg                  # só com um Postgres local
+npm run dev                          # http://localhost:3000
 ```
 
-**Como página estática.** Serve o `index.html` tal como está:
+`PG_DRIVER=pg` troca o driver HTTP da Neon pelo cliente Postgres normal. Em
+produção fica por definir.
+
+## Publicar como Artifact do Claude
 
 ```bash
-npx http-server . -p 8080
+npm run artifact     # escreve dist/artifact.html
 ```
+
+O publicador acrescenta o `<head>` e o `<body>`, por isso o script tira-os. A
+página publicada usa a capacidade `db` e só é visível para quem tiver sessão
+iniciada no Claude dentro da mesma organização.
+
+## A API
+
+Todas as rotas devolvem JSON e, com `APP_PASSWORD` definida, exigem o cabeçalho
+`x-escala-key`.
+
+| Rota | Faz |
+| --- | --- |
+| `GET /api/state` | a escala e os dias registados, tudo o que a página desenha |
+| `POST /api/runs` | regista ou troca quem foi num dia |
+| `DELETE /api/runs?date=…` | apaga o registo de um dia |
+| `DELETE /api/runs?all=1` | apaga todos os registos, mantendo a escala |
+| `POST /api/people` | junta alguém à escala |
+| `PATCH /api/people` | muda o nome ou a cor |
+| `DELETE /api/people?id=…` | tira alguém da escala |
+
+O nome de quem está na escala vem sempre da base de dados, nunca do corpo do
+pedido, para que um registo não possa inventar um nome para uma pessoa
+existente.
 
 ## Estrutura dos dados
 
 ```
-config/roster        { seeded, at }
-people/<id>          { name, color, createdAt }
-runs/<AAAA-MM-DD>    { date, personId, personName, guest?, updatedAt }
+meta   (k, v)                                    marca que a escala já foi semeada
+people (id, name, color, created_at)
+runs   (run_date, person_id, person_name, guest, updated_at)
 ```
 
-Uma ida registada por «Outro» tem `personId` vazio e `guest: true`. O documento
-`config/roster` marca que a escala inicial já foi criada, e a criação é protegida
-por um *lease* para que dois dispositivos a abrirem ao mesmo tempo não dupliquem
-os nomes.
-
-O identificador do documento de cada ida é a própria data, por isso não há
-maneira de registar o mesmo dia duas vezes.
+O dia é a chave primária de `runs`, por isso não há maneira de registar o mesmo
+dia duas vezes. `person_id` fica a `null` quando alguém sai da escala, e o dia
+passa a contar como «fora da escala» com o nome que tinha.

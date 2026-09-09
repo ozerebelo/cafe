@@ -168,7 +168,7 @@ h2{font-size:1.12rem;font-weight:700}
 .btn.danger{color:var(--crit);border-color:var(--crit)}
 .btn[disabled]{opacity:.45;cursor:not-allowed}
 
-textarea,input[type=text]{
+textarea,input[type=text],input[type=password]{
   font:inherit;width:100%;color:var(--ink);background:var(--surface-2);
   border:1px solid var(--line-strong);border-radius:7px;padding:9px 11px;
 }
@@ -377,7 +377,7 @@ document.documentElement.lang = 'pt-PT';
 
 /* ============ constantes ============ */
 var PALETTE = ['#2451B2','#1C7A6E','#9C4A2E','#6B4C9A','#B0862B','#3D7A31','#A83B62','#2E6E9E','#8A5A2B','#4A5568'];
-var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me', seeded:'escala-cafe.seeded'};
+var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me', seeded:'escala-cafe.seeded', key:'escala-cafe.key'};
 var ROSTER = ['André','Carol','Duarte','Maria','Paulinho','Zé'];
 var GUEST_COLOR = '#4A5568';
 var CLIENT = 'c'+Math.random().toString(36).slice(2,10);
@@ -503,6 +503,78 @@ function cloudStore(db){
   };
 }
 
+/* ============ armazenamento pela API (Vercel + Neon) ============ */
+function apiStore(key){
+  var pcb=null, rcb=null, last='', timer=null, started=false, warned=false;
+
+  function headers(withBody){
+    var h = withBody ? {'content-type':'application/json'} : {};
+    if(key) h['x-escala-key']=key;
+    return h;
+  }
+  function pull(){
+    return fetch('api/state',{headers:headers(false),cache:'no-store'}).then(function(r){
+      if(r.status===401){ lockOut(); throw new Error('unauthorized'); }
+      if(!r.ok) throw new Error('http '+r.status);
+      return r.json();
+    }).then(function(d){
+      var sig=JSON.stringify(d);
+      if(sig===last) return;
+      last=sig; warned=false;
+      if(pcb) pcb(d.people||[]);
+      if(rcb) rcb(d.runs||[]);
+    });
+  }
+  function send(path,method,body,query){
+    return fetch('api/'+path+(query||''),{
+      method:method, headers:headers(!!body),
+      body:body?JSON.stringify(body):undefined
+    }).then(function(r){
+      if(r.status===401){ lockOut(); throw new Error('unauthorized'); }
+      if(!r.ok) throw new Error('http '+r.status);
+    }).then(pull);
+  }
+  /* A Neon não empurra alterações, por isso o que os outros dispositivos
+     registam chega ao voltar a pedir o estado: de seis em seis segundos
+     com o separador à vista, e logo que ele volte a estar. */
+  function kick(){
+    if(started) return;
+    started=true;
+    pull().catch(function(){ if(!warned){ warned=true; note('sem ligação ao servidor'); } });
+    timer=setInterval(function(){
+      if(document.visibilityState==='visible') pull().catch(function(){});
+    },6000);
+    document.addEventListener('visibilitychange',function(){
+      if(document.visibilityState==='visible') pull().catch(function(){});
+    });
+  }
+
+  return {
+    mode:'api',
+    onPeople:function(cb){pcb=cb;kick();},
+    onRuns:function(cb){rcb=cb;kick();},
+    addPerson:function(p){return send('people','POST',{name:p.name});},
+    updatePerson:function(id,patch){return send('people','PATCH',Object.assign({id:id},patch));},
+    removePerson:function(id){return send('people','DELETE',null,'?id='+encodeURIComponent(id));},
+    setRun:function(date,r){return send('runs','POST',
+      {date:date,personId:r.personId||'',personName:r.personName});},
+    clearRun:function(date){return send('runs','DELETE',null,'?date='+encodeURIComponent(date));},
+    clearRuns:function(){return send('runs','DELETE',null,'?all=1');},
+    seedRoster:function(){return Promise.resolve();}
+  };
+}
+
+function apiProbe(key){
+  var h={};
+  if(key) h['x-escala-key']=key;
+  return fetch('api/state',{headers:h,cache:'no-store'}).then(function(r){
+    if(r.status===401) return 'auth';
+    return r.ok?'ok':null;
+  }).catch(function(){ return null; });
+}
+
+function lockOut(){ sheet={type:'key',again:true}; renderSheet(); }
+
 var noteTimer=null;
 function note(msg){
   var el=document.getElementById('statusText');
@@ -586,7 +658,9 @@ function render(){
 function renderStatus(){
   var el=document.getElementById('status'), t=document.getElementById('statusText');
   if(!store){ el.removeAttribute('data-mode'); t.textContent='a ligar…'; return; }
-  if(store.mode==='cloud'){ el.setAttribute('data-mode','cloud'); t.textContent='partilhado'; }
+  if(store.mode==='cloud'||store.mode==='api'){
+    el.setAttribute('data-mode','cloud'); t.textContent='partilhado';
+  }
   else { el.setAttribute('data-mode','local'); t.textContent='só neste dispositivo'; }
 }
 function renderMe(){
@@ -808,6 +882,17 @@ function renderSheet(){
         (run?'<button class="btn danger" data-act="clear" data-date="'+esc(d)+'">Apagar registo</button>':'')+
         '<button class="btn ghost" data-act="closesheet">Fechar</button>'+
       '</div>';
+  } else if(sheet.type==='key'){
+    box.innerHTML=
+      '<p class="eyebrow">acesso</p>'+
+      '<h3 id="sheetTitle">Esta escala pede palavra-passe</h3>'+
+      '<p class="hint">'+(sheet.again
+        ? 'Essa palavra-passe não serviu. Tenta outra vez.'
+        : 'Pede-a a quem montou a aplicação. Fica guardada neste dispositivo.')+'</p>'+
+      '<input type="password" id="keyInput" placeholder="Palavra-passe" style="margin-top:14px">'+
+      '<div class="row-actions"><button class="btn primary" data-act="savekey">Entrar</button></div>';
+    var ki=document.getElementById('keyInput');
+    if(ki) ki.focus();
   } else if(sheet.type==='guest'){
     var gd=sheet.date, gr=runs.get(gd);
     var pre=(gr&&!people.some(function(x){return x.id===gr.personId;}))?gr.personName:'';
@@ -877,6 +962,20 @@ document.addEventListener('click', function(e){
     if(a==='pick'){ setRun(date,id); if(sheet&&sheet.type==='day') closeSheet(); return; }
     if(a==='clear'){ if(store) store.clearRun(date).catch(function(){note('não foi possível apagar');}); closeSheet(); return; }
     if(a==='closesheet'){ closeSheet(); return; }
+    if(a==='savekey'){
+      var ki=document.getElementById('keyInput');
+      var v=ki?ki.value:'';
+      if(!v) return;
+      apiProbe(v).then(function(st){
+        if(st==='ok'){
+          try{ localStorage.setItem(LS.key,v); }catch(err){}
+          sheet=null; start(apiStore(v));
+        } else {
+          sheet={type:'key',again:true}; renderSheet();
+        }
+      });
+      return;
+    }
     if(a==='confirmyes'){ var fn=sheet&&sheet.fn; closeSheet(); if(fn) fn(); return; }
     if(a==='seed'){ if(store) store.seedRoster(ROSTER).catch(function(){note('não foi possível criar a escala');}); return; }
     if(a==='other'){ sheet={type:'guest',date:date}; renderSheet(); return; }
@@ -925,11 +1024,11 @@ document.addEventListener('click', function(e){
       return;
     }
   }
-  if(e.target.id==='overlay') closeSheet();
+  if(e.target.id==='overlay' && sheet && sheet.type!=='key') closeSheet();
 });
 
 document.addEventListener('keydown', function(e){
-  if(e.key==='Escape'&&sheet) closeSheet();
+  if(e.key==='Escape'&&sheet&&sheet.type!=='key') closeSheet();
   if(e.key==='Enter'){
     if(e.target.id==='addName'&&e.target.value.trim()){ addPeople([e.target.value]); e.target.value=''; }
     if(e.target.id==='editName'){
@@ -939,6 +1038,10 @@ document.addEventListener('keydown', function(e){
     if(e.target.id==='guestName'){
       var gb=document.querySelector('[data-act="saveguest"]');
       if(gb) gb.click();
+    }
+    if(e.target.id==='keyInput'){
+      var kb=document.querySelector('[data-act="savekey"]');
+      if(kb) kb.click();
     }
   }
 });
@@ -975,18 +1078,35 @@ function connect(){
   });
 }
 
+function start(s){ store=s; connect(); ready=true; render(); }
+
+/* Três sítios onde os dados podem viver, por esta ordem: a base de dados
+   do Artifact quando a página corre no Claude, a API sobre Postgres
+   quando está publicada num servidor, e o próprio browser quando não há
+   nenhuma das outras. O estado da ligação diz sempre qual saiu. */
 (function boot(){
   render();
+  var savedKey=null;
+  try{ savedKey=localStorage.getItem(LS.key)||null; }catch(e){}
+  var probe=apiProbe(savedKey);
+
+  function withoutClaude(){
+    probe.then(function(st){
+      if(st==='ok'){ start(apiStore(savedKey)); return; }
+      if(st==='auth'){ ready=true; sheet={type:'key'}; render(); return; }
+      start(localStore());
+    });
+  }
+
   var tries=0;
   (function findClaude(){
     if(window.claude&&typeof window.claude.use==='function'){
       window.claude.use('db').then(function(db){
-        store=db?cloudStore(db):localStore();
-        connect(); ready=true; render();
-      }).catch(function(){ store=localStore(); connect(); ready=true; render(); });
+        if(db) start(cloudStore(db)); else withoutClaude();
+      }).catch(withoutClaude);
       return;
     }
-    if(tries++>4){ store=localStore(); connect(); ready=true; render(); return; }
+    if(tries++>4){ withoutClaude(); return; }
     setTimeout(findClaude,200);
   })();
 })();

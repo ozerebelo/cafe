@@ -1,0 +1,17 @@
+{
+  "name": "escala-cafe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Registo diário de quem foi buscar o café",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "artifact": "./scripts/build-artifact.sh"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  },
+  "devDependencies": {
+    "pg": "^8.13.1"
+  }
+}

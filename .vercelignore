@@ -1,0 +1,5 @@
+dist/
+scripts/
+test/
+schema.sql
+README.md
