@@ -57,7 +57,7 @@ vista, e logo que ele volte a estar.
    *connection string* com pooling, a que tem `-pooler` no anfitrião.
 2. **Projeto.** Em [vercel.com/new](https://vercel.com/new), importa este
    repositório. Não há framework a escolher: as funções em `api/` e o
-   `index.html` na raiz bastam.
+   `index.html` na raiz bastam. A branch de produção é a `main`.
 3. **Variáveis de ambiente**, em Settings → Environment Variables:
 
    | Nome | Obrigatória | Para que serve |
