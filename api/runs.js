@@ -3,7 +3,7 @@
    DELETE /api/runs?date=…    — apaga o registo desse dia
    DELETE /api/runs?all=1     — apaga todos os registos, mantendo a escala */
 
-import { db, route, readJson, isDate, cleanName } from './_lib.js';
+import { db, route, readJson, isDate, cleanName, today, isAdmin } from './_lib.js';
 
 export default route(['POST', 'DELETE'], async (req, res) => {
   const sql = await db();
@@ -12,6 +12,17 @@ export default route(['POST', 'DELETE'], async (req, res) => {
     const body = await readJson(req);
     if (!isDate(body.date)) {
       return res.status(400).json({ error: 'data_invalida' });
+    }
+    if (body.date > await today(sql)) {
+      return res.status(400).json({ error: 'dia_futuro' });
+    }
+
+    /* Registar num dia vazio é de toda a gente. Mexer num dia que já tem
+       registo apaga o que lá estava, por isso segue a mesma regra que
+       apagar: só o administrador. */
+    const taken = await sql`select 1 from runs where run_date = ${body.date}`;
+    if (taken.length && !isAdmin(req)) {
+      return res.status(403).json({ error: 'so_administrador' });
     }
 
     let personId = null;
@@ -43,6 +54,8 @@ export default route(['POST', 'DELETE'], async (req, res) => {
 
     return res.status(200).json({ ok: true });
   }
+
+  if (!isAdmin(req)) return res.status(403).json({ error: 'so_administrador' });
 
   const url = new URL(req.url, 'http://localhost');
   if (url.searchParams.get('all') === '1') {

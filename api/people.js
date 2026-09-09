@@ -6,7 +6,7 @@
    Quem sai deixa os dias já registados de pé: passam a contar como
    "fora da escala", com o nome que tinham na altura. */
 
-import { db, route, readJson, isColor, cleanName, PALETTE } from './_lib.js';
+import { db, route, readJson, isColor, cleanName, isAdmin, PALETTE } from './_lib.js';
 import { randomUUID } from 'node:crypto';
 
 export default route(['POST', 'PATCH', 'DELETE'], async (req, res) => {
@@ -49,6 +49,10 @@ export default route(['POST', 'PATCH', 'DELETE'], async (req, res) => {
     }
     return res.status(200).json({ ok: true });
   }
+
+  /* Sair da escala apaga a dívida de quem sai, por isso vale a mesma
+     regra que apagar registos. */
+  if (!isAdmin(req)) return res.status(403).json({ error: 'so_administrador' });
 
   const url = new URL(req.url, 'http://localhost');
   const id = url.searchParams.get('id');

@@ -2,7 +2,7 @@
    os dias registados. É também o que o cliente volta a pedir de poucos em
    poucos segundos para apanhar o que os outros dispositivos registaram. */
 
-import { db, route } from './_lib.js';
+import { db, route, today, adminRequired, isAdmin } from './_lib.js';
 
 export default route(['GET'], async (req, res) => {
   const sql = await db();
@@ -21,5 +21,12 @@ export default route(['GET'], async (req, res) => {
     order by run_date desc
     limit 2000`;
 
-  return res.status(200).json({ people, runs });
+  /* `today` vem do servidor para que a página não dependa do relógio do
+     telemóvel ao decidir que dias já passaram. */
+  return res.status(200).json({
+    today: await today(sql),
+    people,
+    runs,
+    admin: { required: adminRequired(), ok: isAdmin(req) },
+  });
 });

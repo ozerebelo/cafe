@@ -90,16 +90,37 @@ export async function db() {
   return sql;
 }
 
-/* Sem APP_PASSWORD a aplicação fica aberta a quem tiver o endereço. */
-export function authorized(req) {
-  const expected = process.env.APP_PASSWORD;
-  if (!expected) return true;
-  const given = req.headers['x-escala-key'];
+function matches(given, expected) {
   if (typeof given !== 'string') return false;
   const a = Buffer.from(given);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+/* Sem APP_PASSWORD a aplicação fica aberta a quem tiver o endereço. */
+export function authorized(req) {
+  const expected = process.env.APP_PASSWORD;
+  if (!expected) return true;
+  return matches(req.headers['x-escala-key'], expected);
+}
+
+/* ADMIN_PASSWORD guarda o que apaga ou reescreve histórico. Sem ela não
+   há administrador nenhum, e essas ações ficam abertas como as outras. */
+export const adminRequired = () => Boolean(process.env.ADMIN_PASSWORD);
+
+export function isAdmin(req) {
+  const expected = process.env.ADMIN_PASSWORD;
+  if (!expected) return true;
+  return matches(req.headers['x-escala-admin'], expected);
+}
+
+/* O dia de hoje em Lisboa, não em UTC: às onze da noite de verão os dois
+   já não são o mesmo, e quem regista à noite marcaria o dia seguinte. */
+export async function today(sql) {
+  const rows = await sql`
+    select to_char((now() at time zone 'Europe/Lisbon')::date, 'YYYY-MM-DD') as d`;
+  return rows[0].d;
 }
 
 export async function readJson(req) {

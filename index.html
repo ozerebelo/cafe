@@ -204,10 +204,10 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
   cursor:pointer;padding:0;display:grid;place-items:center;
   transition:border-color .12s;
 }
-.cell:hover{border-color:var(--cobalt)}
+button.cell:hover{border-color:var(--cobalt)}
 .cell.blank{border:none;background:transparent;cursor:default}
 .cell.weekend{background:transparent;border-style:dashed}
-.cell.future{opacity:.5}
+.cell.future{opacity:.45;cursor:default}
 .cell.today{border-color:var(--cobalt);box-shadow:inset 0 0 0 1px var(--cobalt)}
 .cell-num{
   position:absolute;top:4px;left:5px;
@@ -268,6 +268,7 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
 .team-name{font-weight:600;font-size:.92rem;margin-right:auto}
 .team-meta{font-family:var(--font-mono);font-size:.68rem;color:var(--ink-3)}
 .team-acts{display:flex;gap:6px;flex-wrap:wrap}
+.sec-acts{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
 .icon{
   padding:4px 9px;border-radius:6px;cursor:pointer;
   background:transparent;border:1px solid var(--line);
@@ -378,7 +379,7 @@ textarea{margin-top:14px;resize:vertical;line-height:1.6}
   </div>
 
   <section class="panel">
-    <div class="sec-head"><h2>A escala</h2><button class="btn ghost" data-act="clearruns">Apagar registos</button></div>
+    <div class="sec-head"><h2>A escala</h2><span class="sec-acts" id="teamActions"></span></div>
     <ul class="team-list" id="teamList"></ul>
     <div class="add-row">
       <input type="text" id="addName" placeholder="Nome de quem entra na escala" autocomplete="off">
@@ -401,7 +402,7 @@ document.documentElement.lang = 'pt-PT';
 
 /* ============ constantes ============ */
 var PALETTE = ['#2451B2','#1C7A6E','#9C4A2E','#6B4C9A','#B0862B','#3D7A31','#A83B62','#2E6E9E','#8A5A2B','#4A5568'];
-var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me', seeded:'escala-cafe.seeded', key:'escala-cafe.key'};
+var LS = {people:'escala-cafe.people', runs:'escala-cafe.runs', me:'escala-cafe.me', seeded:'escala-cafe.seeded', key:'escala-cafe.key', admin:'escala-cafe.admin'};
 var ROSTER = ['André','Carol','Duarte','Maria','Paulinho','Zé'];
 var GUEST_COLOR = '#4A5568';
 var CLIENT = 'c'+Math.random().toString(36).slice(2,10);
@@ -410,7 +411,7 @@ var CLIENT = 'c'+Math.random().toString(36).slice(2,10);
 function pad(n){return String(n).padStart(2,'0');}
 function toISO(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
 function fromISO(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
-function todayISO(){return toISO(new Date());}
+function todayISO(){return serverDate||toISO(new Date());}
 function shiftISO(iso,n){var d=fromISO(iso);d.setDate(d.getDate()+n);return toISO(d);}
 function dayDiff(a,b){return Math.round((fromISO(b)-fromISO(a))/86400000);}
 var fWeekday=new Intl.DateTimeFormat('pt-PT',{weekday:'long'});
@@ -440,6 +441,11 @@ function initials(name){
 /* ============ estado ============ */
 var people=[], runs=new Map(), store=null, ready=false;
 var me=null, editingId=null, sheet=null;
+/* O servidor manda o dia de hoje e diz se há administrador e se este
+   dispositivo já entrou como tal. Sem servidor, nada disto se aplica. */
+var serverDate=null, adminKey=null, admin={required:false, ok:false};
+try{ adminKey=localStorage.getItem(LS.admin)||null; }catch(e){}
+function locked(){ return admin.required && !admin.ok; }
 var view=(function(){var d=new Date();return {y:d.getFullYear(), m:d.getMonth()};})();
 var period='all';
 try{ me=localStorage.getItem(LS.me)||null; }catch(e){}
@@ -534,6 +540,7 @@ function apiStore(key){
   function headers(withBody){
     var h = withBody ? {'content-type':'application/json'} : {};
     if(key) h['x-escala-key']=key;
+    if(adminKey) h['x-escala-admin']=adminKey;
     return h;
   }
   function pull(){
@@ -545,6 +552,8 @@ function apiStore(key){
       var sig=JSON.stringify(d);
       if(sig===last) return;
       last=sig; warned=false;
+      if(d.today) serverDate=d.today;
+      if(d.admin) admin={required:!!d.admin.required, ok:!!d.admin.ok};
       if(pcb) pcb(d.people||[]);
       if(rcb) rcb(d.runs||[]);
     });
@@ -555,7 +564,20 @@ function apiStore(key){
       body:body?JSON.stringify(body):undefined
     }).then(function(r){
       if(r.status===401){ lockOut(); throw new Error('unauthorized'); }
-      if(!r.ok) throw new Error('http '+r.status);
+      if(r.ok) return;
+      return r.json().catch(function(){ return {}; }).then(function(body){
+        if(body.error==='so_administrador'){
+          admin.ok=false; adminKey=null;
+          sheet={type:'admin',again:false}; renderSheet();
+        } else if(body.error==='dia_futuro'){
+          note('ainda não dá para marcar esse dia');
+        } else {
+          note('não foi possível guardar');
+        }
+        var err=new Error(body.error||('http '+r.status));
+        err.handled=true;
+        throw err;
+      });
     }).then(pull);
   }
   /* A Neon não empurra alterações, por isso o que os outros dispositivos
@@ -575,6 +597,7 @@ function apiStore(key){
 
   return {
     mode:'api',
+    refresh:pull,
     onPeople:function(cb){pcb=cb;kick();},
     onRuns:function(cb){rcb=cb;kick();},
     addPerson:function(p){return send('people','POST',{name:p.name});},
@@ -600,6 +623,11 @@ function apiProbe(key){
 function lockOut(){ sheet={type:'key',again:true}; renderSheet(); }
 
 var noteTimer=null;
+/* Quando o servidor já explicou o que correu mal, não sobrepomos uma
+   mensagem genérica por cima dela. */
+function fail(msg){
+  return function(err){ if(!(err&&err.handled)) note(msg); };
+}
 function note(msg){
   var el=document.getElementById('statusText');
   el.textContent=msg;
@@ -748,10 +776,15 @@ function renderToday(){
             :'Não está na escala, por isso este dia não mexe no saldo de ninguém.')+'</p>'+
         '</div>'+
       '</div>'+
-      '<div class="row-actions">'+
-        '<button class="btn" data-act="day" data-date="'+t+'">Trocar</button>'+
-        '<button class="btn danger" data-act="clear" data-date="'+t+'">Apagar registo</button>'+
-      '</div>';
+      (locked()
+        ? '<div class="row-actions">'+
+            '<button class="btn" data-act="adminlogin">Trocar ou apagar</button>'+
+          '</div>'+
+          '<p class="foot">Trocar ou apagar um registo precisa da palavra-passe de administrador.</p>'
+        : '<div class="row-actions">'+
+            '<button class="btn" data-act="day" data-date="'+t+'">Trocar</button>'+
+            '<button class="btn danger" data-act="clear" data-date="'+t+'">Apagar registo</button>'+
+          '</div>');
     return;
   }
 
@@ -780,17 +813,21 @@ function renderCalendar(){
     var dow=new Date(view.y,view.m,d).getDay();
     var run=runs.get(iso);
     var p=run?people.filter(function(x){return x.id===run.personId;})[0]:null;
+    var future=iso>t;
     var cls='cell';
     if(dow===0||dow===6) cls+=' weekend';
-    if(iso>t) cls+=' future';
+    if(future) cls+=' future';
     if(iso===t) cls+=' today';
     if(run) cls+=' filled';
-    html+='<button class="'+cls+'" data-act="day" data-date="'+iso+'"'+
+    /* Um dia que ainda não chegou não é um botão: não há nada a registar. */
+    var tag=future?'div':'button';
+    html+='<'+tag+' class="'+cls+'"'+
+      (future?'':' data-act="day" data-date="'+iso+'"')+
       (run?(' style="--tile:'+esc(p?p.color:GUEST_COLOR)+'"'):'')+
-      ' aria-label="'+d+' — '+(run?esc(run.personName):'sem registo')+'">'+
+      ' aria-label="'+d+' — '+(future?'ainda não chegou':(run?esc(run.personName):'sem registo'))+'">'+
       '<span class="cell-num">'+d+'</span>'+
       (run?'<span class="cell-ini">'+esc(initials(run.personName))+'</span>':'')+
-      '</button>';
+      '</'+tag+'>';
   }
   document.getElementById('calGrid').innerHTML=html;
   var anyGuest=false;
@@ -866,6 +903,14 @@ function renderTab(){
 }
 
 function renderTeam(){
+  document.getElementById('teamActions').innerHTML =
+    (locked()
+      ? '<button class="btn ghost" data-act="adminlogin">Apagar registos</button>'
+      : '<button class="btn ghost" data-act="clearruns">Apagar registos</button>'+
+        (admin.required&&admin.ok
+          ? '<button class="btn ghost" data-act="adminlogout">sair de administrador</button>'
+          : ''));
+
   var el=document.getElementById('teamList');
   if(!people.length){ el.innerHTML='<p class="empty">Sem ninguém na escala.</p>'; return; }
   var counts={}; people.forEach(function(p){counts[p.id]=0;});
@@ -887,7 +932,8 @@ function renderTeam(){
       '<span class="team-acts">'+
         '<button class="icon" data-act="recolor" data-id="'+esc(p.id)+'">cor</button>'+
         '<button class="icon" data-act="rename" data-id="'+esc(p.id)+'">nome</button>'+
-        '<button class="icon danger" data-act="removeperson" data-id="'+esc(p.id)+'">remover</button>'+
+        '<button class="icon danger" data-act="'+(locked()?'adminlogin':'removeperson')+
+          '" data-id="'+esc(p.id)+'">remover</button>'+
       '</span>'+
     '</li>';
   }).join('');
@@ -899,16 +945,41 @@ function renderSheet(){
   ov.hidden=false;
   if(sheet.type==='day'){
     var d=sheet.date, run=runs.get(d);
-    box.innerHTML=
+    var head=
       '<p class="eyebrow">'+esc(fWeekday.format(fromISO(d)).toLowerCase())+'</p>'+
-      '<h3 id="sheetTitle">'+esc(fDayMonth.format(fromISO(d)))+'</h3>'+
-      '<p class="hint">'+(run?('Registado: <strong>'+esc(run.personName)+'</strong>. Escolhe outra pessoa para trocar.')
-        :'Quem foi buscar o café neste dia?')+'</p>'+
-      '<div class="picker">'+personChips(d, run?run.personId:null)+'</div>'+
+      '<h3 id="sheetTitle">'+esc(fDayMonth.format(fromISO(d)))+'</h3>';
+    if(run && locked()){
+      box.innerHTML=head+
+        '<p class="hint">Registado: <strong>'+esc(run.personName)+'</strong>. '+
+        'Trocar ou apagar este dia precisa da palavra-passe de administrador.</p>'+
+        '<div class="row-actions">'+
+          '<button class="btn primary" data-act="adminlogin">Entrar como administrador</button>'+
+          '<button class="btn ghost" data-act="closesheet">Fechar</button>'+
+        '</div>';
+    } else {
+      box.innerHTML=head+
+        '<p class="hint">'+(run?('Registado: <strong>'+esc(run.personName)+'</strong>. Escolhe outra pessoa para trocar.')
+          :'Quem foi buscar o café neste dia?')+'</p>'+
+        '<div class="picker">'+personChips(d, run?run.personId:null)+'</div>'+
+        '<div class="row-actions">'+
+          (run?'<button class="btn danger" data-act="clear" data-date="'+esc(d)+'">Apagar registo</button>':'')+
+          '<button class="btn ghost" data-act="closesheet">Fechar</button>'+
+        '</div>';
+    }
+  } else if(sheet.type==='admin'){
+    box.innerHTML=
+      '<p class="eyebrow">administrador</p>'+
+      '<h3 id="sheetTitle">Apagar e trocar registos</h3>'+
+      '<p class="hint">'+(sheet.again
+        ? 'Essa palavra-passe não serviu. Tenta outra vez.'
+        : 'Só quem tem a palavra-passe de administrador pode apagar ou trocar um dia já registado, ou tirar alguém da escala.')+'</p>'+
+      '<input type="password" id="adminInput" placeholder="Palavra-passe de administrador" autocomplete="off" style="margin-top:14px">'+
       '<div class="row-actions">'+
-        (run?'<button class="btn danger" data-act="clear" data-date="'+esc(d)+'">Apagar registo</button>':'')+
-        '<button class="btn ghost" data-act="closesheet">Fechar</button>'+
+        '<button class="btn primary" data-act="saveadmin">Entrar</button>'+
+        '<button class="btn ghost" data-act="closesheet">Cancelar</button>'+
       '</div>';
+    var ai=document.getElementById('adminInput');
+    if(ai) ai.focus();
   } else if(sheet.type==='key'){
     box.innerHTML=
       '<p class="eyebrow">acesso</p>'+
@@ -958,7 +1029,7 @@ function addPeople(names){
     var color=PALETTE[(people.length+i)%PALETTE.length]; i++;
     chain=chain.then(function(){ return store.addPerson({name:name,color:color,createdAt:today}); });
   });
-  return chain.catch(function(){ note('não foi possível guardar'); });
+  return chain.catch(fail('não foi possível guardar'));
 }
 
 function setRun(date,id){
@@ -966,7 +1037,7 @@ function setRun(date,id){
   var p=people.filter(function(x){return x.id===id;})[0];
   if(!p) return;
   store.setRun(date,{personId:p.id,personName:p.name,updatedAt:new Date().toISOString()})
-    .catch(function(){ note('não foi possível guardar'); });
+    .catch(fail('não foi possível guardar'));
 }
 
 function setGuestRun(date,name){
@@ -974,7 +1045,7 @@ function setGuestRun(date,name){
   var nm=String(name||'').trim().slice(0,40);
   if(!nm) return;
   store.setRun(date,{personId:'',personName:nm,guest:true,updatedAt:new Date().toISOString()})
-    .catch(function(){ note('não foi possível guardar'); });
+    .catch(fail('não foi possível guardar'));
 }
 
 /* ============ eventos ============ */
@@ -987,7 +1058,7 @@ document.addEventListener('click', function(e){
     if(a==='thismonth'){ var n=new Date(); view={y:n.getFullYear(),m:n.getMonth()}; render(); return; }
     if(a==='day'){ sheet={type:'day',date:date}; renderSheet(); return; }
     if(a==='pick'){ setRun(date,id); if(sheet&&sheet.type==='day') closeSheet(); return; }
-    if(a==='clear'){ if(store) store.clearRun(date).catch(function(){note('não foi possível apagar');}); closeSheet(); return; }
+    if(a==='clear'){ if(store) store.clearRun(date).catch(fail('não foi possível apagar')); closeSheet(); return; }
     if(a==='closesheet'){ closeSheet(); return; }
     if(a==='savekey'){
       var ki=document.getElementById('keyInput');
@@ -1004,7 +1075,34 @@ document.addEventListener('click', function(e){
       return;
     }
     if(a==='confirmyes'){ var fn=sheet&&sheet.fn; closeSheet(); if(fn) fn(); return; }
-    if(a==='seed'){ if(store) store.seedRoster(ROSTER).catch(function(){note('não foi possível criar a escala');}); return; }
+    if(a==='adminlogin'){ sheet={type:'admin',again:false}; renderSheet(); return; }
+    if(a==='adminlogout'){
+      adminKey=null; admin.ok=false;
+      try{ localStorage.removeItem(LS.admin); }catch(err){}
+      if(store&&store.refresh) store.refresh().catch(function(){});
+      render();
+      return;
+    }
+    if(a==='saveadmin'){
+      var ai=document.getElementById('adminInput');
+      var v=ai?ai.value:'';
+      if(!v||!store||!store.refresh) return;
+      adminKey=v;
+      store.refresh().then(function(){
+        if(admin.ok){
+          try{ localStorage.setItem(LS.admin,v); }catch(err){}
+          sheet=null; render();
+        } else {
+          adminKey=null;
+          sheet={type:'admin',again:true}; renderSheet();
+        }
+      }).catch(function(){
+        adminKey=null;
+        sheet={type:'admin',again:true}; renderSheet();
+      });
+      return;
+    }
+    if(a==='seed'){ if(store) store.seedRoster(ROSTER).catch(fail('não foi possível criar a escala')); return; }
     if(a==='other'){ sheet={type:'guest',date:date}; renderSheet(); return; }
     if(a==='saveguest'){
       var gi=document.getElementById('guestName');
@@ -1023,7 +1121,7 @@ document.addEventListener('click', function(e){
       var f2=document.getElementById('editName');
       var v=f2?f2.value.trim():'';
       editingId=null;
-      if(v&&store) store.updatePerson(id,{name:v}).catch(function(){note('não foi possível guardar');});
+      if(v&&store) store.updatePerson(id,{name:v}).catch(fail('não foi possível guardar'));
       else renderTeam();
       return;
     }
@@ -1032,7 +1130,7 @@ document.addEventListener('click', function(e){
       if(p&&store){
         var i=PALETTE.indexOf(p.color);
         store.updatePerson(id,{color:PALETTE[(i+1)%PALETTE.length]})
-          .catch(function(){note('não foi possível guardar');});
+          .catch(fail('não foi possível guardar'));
       }
       return;
     }
@@ -1041,13 +1139,13 @@ document.addEventListener('click', function(e){
       if(!pr) return;
       askConfirm('Remover '+pr.name+'?',
         'Os dias já registados continuam no calendário com o nome, mas deixa de contar para a conta.',
-        'Remover', function(){ if(store) store.removePerson(id).catch(function(){note('não foi possível remover');}); });
+        'Remover', function(){ if(store) store.removePerson(id).catch(fail('não foi possível remover')); });
       return;
     }
     if(a==='clearruns'){
       askConfirm('Apagar todos os registos?',
         'Apaga todos os dias já registados, para toda a gente. Os nomes da escala ficam. Não há como voltar atrás.',
-        'Apagar registos', function(){ if(store) store.clearRuns().catch(function(){note('não foi possível apagar');}); });
+        'Apagar registos', function(){ if(store) store.clearRuns().catch(fail('não foi possível apagar')); });
       return;
     }
   }
@@ -1069,6 +1167,10 @@ document.addEventListener('keydown', function(e){
     if(e.target.id==='keyInput'){
       var kb=document.querySelector('[data-act="savekey"]');
       if(kb) kb.click();
+    }
+    if(e.target.id==='adminInput'){
+      var ab=document.querySelector('[data-act="saveadmin"]');
+      if(ab) ab.click();
     }
   }
 });

@@ -7,7 +7,8 @@ toque para registar, e uma conta que mostra quem se anda a escapar à tarefa.
 
 - **Hoje** — quem foi buscar o café hoje, com sugestão de quem devia ir a seguir.
 - **Calendário** — o mês inteiro em azulejo: cada dia registado fica com a cor da
-  pessoa. Toca num dia para registar, trocar ou apagar.
+  pessoa. Toca num dia para registar, trocar ou apagar. Dias que ainda não
+  chegaram não se marcam, nem sequer pelo administrador.
 - **A conta do café** — idas por pessoa, quota justa e saldo. Saldo negativo é
   quem ficou a dever cafés. Filtra por 30 dias, 90 dias ou desde sempre.
 - **A escala** — a lista de nomes que aparece no registo, com cor e nome
@@ -63,6 +64,7 @@ vista, e logo que ele volte a estar.
    | --- | --- | --- |
    | `DATABASE_URL` | sim | a *connection string* da Neon |
    | `APP_PASSWORD` | não | palavra-passe única para abrir a app |
+   | `ADMIN_PASSWORD` | não | palavra-passe para apagar e trocar registos |
 
 4. **Deploy.** As tabelas e a escala inicial criam-se no primeiro pedido. Não é
    preciso correr nada à mão.
@@ -71,8 +73,38 @@ Sem `APP_PASSWORD` a app fica aberta a quem tiver o endereço. Com ela, a págin
 pede a palavra-passe uma vez por dispositivo e guarda-a no browser; a API recusa
 tudo o resto.
 
+Sem `ADMIN_PASSWORD` não há administrador nenhum e toda a gente apaga e troca à
+vontade. Define-a se quiseres a regra da secção seguinte.
+
 O `schema.sql` traz as mesmas tabelas, para quem preferir prepará-las no editor
 SQL da Neon.
+
+## Quem pode fazer o quê
+
+A ideia é que ninguém consiga fazer desaparecer uma ida sua sem passar por quem
+tem a palavra-passe de administrador.
+
+| Ação | Quem |
+| --- | --- |
+| Registar um dia ainda vazio | toda a gente |
+| Juntar alguém à escala | toda a gente |
+| Mudar o nome ou a cor de alguém | toda a gente |
+| Trocar quem foi num dia já registado | só o administrador |
+| Apagar o registo de um dia | só o administrador |
+| Apagar todos os registos | só o administrador |
+| Tirar alguém da escala | só o administrador |
+
+Trocar entra na lista porque apaga o que lá estava: sem isso, bastava escrever
+outro nome por cima para a restrição de apagar não valer nada. Tirar alguém da
+escala entra pela mesma razão, porque apaga a dívida de quem sai.
+
+A regra é imposta pela API, não pela página, por isso não se contorna a partir do
+browser. Existe apenas na versão publicada num servidor: no Artifact do Claude e
+no ficheiro aberto à mão não há servidor que a faça cumprir, e tudo fica aberto.
+
+Marcar dias futuros está fechado a toda a gente, administrador incluído. O dia de
+hoje é o do servidor, em hora de Lisboa, para que quem registar às onze da noite
+não caia no dia seguinte.
 
 ## Correr localmente
 
@@ -101,15 +133,19 @@ iniciada no Claude dentro da mesma organização.
 Todas as rotas devolvem JSON e, com `APP_PASSWORD` definida, exigem o cabeçalho
 `x-escala-key`.
 
-| Rota | Faz |
-| --- | --- |
-| `GET /api/state` | a escala e os dias registados, tudo o que a página desenha |
-| `POST /api/runs` | regista ou troca quem foi num dia |
-| `DELETE /api/runs?date=…` | apaga o registo de um dia |
-| `DELETE /api/runs?all=1` | apaga todos os registos, mantendo a escala |
-| `POST /api/people` | junta alguém à escala |
-| `PATCH /api/people` | muda o nome ou a cor |
-| `DELETE /api/people?id=…` | tira alguém da escala |
+As que mexem em registos já feitos pedem também `x-escala-admin`.
+
+| Rota | Faz | Administrador |
+| --- | --- | --- |
+| `GET /api/state` | a escala, os dias registados, o dia de hoje | não |
+| `POST /api/runs` | regista quem foi num dia | só se o dia já tiver registo |
+| `DELETE /api/runs?date=…` | apaga o registo de um dia | sim |
+| `DELETE /api/runs?all=1` | apaga todos os registos | sim |
+| `POST /api/people` | junta alguém à escala | não |
+| `PATCH /api/people` | muda o nome ou a cor | não |
+| `DELETE /api/people?id=…` | tira alguém da escala | sim |
+
+`POST /api/runs` recusa qualquer data depois de hoje, com ou sem administrador.
 
 O nome de quem está na escala vem sempre da base de dados, nunca do corpo do
 pedido, para que um registo não possa inventar um nome para uma pessoa
